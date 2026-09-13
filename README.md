@@ -4,6 +4,8 @@
 
 ![Code-model phase demonstration](demo/code-model-demo.gif)
 
+[Watch the high-quality MP4 recording](demo/code-model-demo.mp4).
+
 ## Flow
 
 ```text
