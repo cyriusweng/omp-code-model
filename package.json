@@ -1,0 +1,35 @@
+{
+  "name": "@cyriusweng/omp-code-model",
+  "version": "0.1.0",
+  "description": "Same-conversation coding-model phases for OMP",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cyriusweng/omp-code-model.git"
+  },
+  "keywords": [
+    "omp",
+    "oh-my-pi",
+    "extension",
+    "coding-agent"
+  ],
+  "scripts": {
+    "test": "node --import ./test/register-loader.mjs --test test/*.test.mjs",
+    "check": "node --check src/*.mjs"
+  },
+  "engines": {
+    "node": ">=22.15"
+  },
+  "omp": {
+    "extensions": [
+      "./src/index.mjs"
+    ]
+  },
+  "files": [
+    "src",
+    "prompts",
+    "README.md",
+    "LICENSE"
+  ]
+}
