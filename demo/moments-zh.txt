@@ -1,0 +1,10 @@
+刚完整录了一次 OMP 的模型接力。
+
+GPT-6-Astra 先读需求、定接口，然后在同一个会话里把实现交给 Gemini 3.8 Flash。Gemini 写代码、补 fixture、跑检查，最后再切回 GPT 做 review。
+
+这次任务给仓库新增了一个 session-cost CLI。最终 63 项测试通过，GPT 复核时又抓到 3 个真实问题：usage 记录校验不完整、安装后的 symlink 调用可能出错、语法检查只覆盖了第一个文件。
+
+整段对话实际记录 $4.339533。把两种模型已经使用的 token 都按 GPT-6-Astra 的单价归一化，估算是 $13.521413，差额 $9.181880，约 67.9%。这组数字用于比较同一批 token 的单价。实际全程使用 GPT-6-Astra 时，执行路径和 token 数量都会变化。
+
+代码、完整加速录屏和机器可读成本数据：
+https://github.com/cyriusweng/omp-code-model

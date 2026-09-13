@@ -14,9 +14,13 @@
     "extension",
     "coding-agent"
   ],
+  "bin": {
+    "omp-session-cost": "./bin/session-cost.mjs"
+  },
   "scripts": {
     "test": "node --import ./test/register-loader.mjs --test test/*.test.mjs",
-    "check": "node --check src/*.mjs"
+    "check": "for file in src/*.mjs bin/*.mjs test/*.mjs; do node --check \"$file\" || exit; done",
+    "session-cost": "node ./bin/session-cost.mjs"
   },
   "engines": {
     "node": ">=22.15"
@@ -28,6 +32,7 @@
   },
   "files": [
     "src",
+    "bin",
     "prompts",
     "README.md",
     "LICENSE"

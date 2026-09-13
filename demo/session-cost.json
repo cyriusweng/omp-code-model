@@ -1,0 +1,56 @@
+{
+  "recordedAt": "2026-09-14",
+  "task": "Add a reusable session-cost reporting command",
+  "sessionId": "01a09cbf-fe8b-70aa-9a2c-d456990dc580",
+  "models": [
+    {
+      "provider": "openai-codex",
+      "model": "gpt-6-astra",
+      "role": "main planning and final review",
+      "inputTokens": 136367,
+      "outputTokens": 12085,
+      "cacheReadTokens": 1627136,
+      "cacheWriteTokens": 0,
+      "recordedCostUsd": 3.595056
+    },
+    {
+      "provider": "google-antigravity",
+      "model": "gemini-3.8-flash",
+      "role": "coding phase",
+      "inputTokens": 360267,
+      "outputTokens": 42471,
+      "cacheReadTokens": 4200137,
+      "cacheWriteTokens": 0,
+      "recordedCostUsd": 0.744476775
+    }
+  ],
+  "totals": {
+    "inputTokens": 496634,
+    "outputTokens": 54556,
+    "cacheReadTokens": 5827273,
+    "cacheWriteTokens": 0,
+    "recordedCostUsd": 4.339532775
+  },
+  "priceNormalisedComparison": {
+    "basis": "Apply GPT-6-Astra list rates to the observed token counts from both models",
+    "gpt6AstraRatesUsdPerMillionTokens": {
+      "input": 10,
+      "output": 50,
+      "cacheRead": 1
+    },
+    "allGpt6AstraEstimateUsd": 13.521413,
+    "hybridRecordedCostUsd": 4.339532775,
+    "estimatedSavingsUsd": 9.181880225,
+    "estimatedSavingsPercent": 67.90621827023551,
+    "codingPhaseAtGpt6AstraRatesUsd": 9.926357,
+    "codingPhaseRecordedCostUsd": 0.744476775,
+    "codingPhaseEstimatedSavingsPercent": 92.5
+  },
+  "verification": {
+    "repositoryTestsPassed": 63,
+    "focusedSessionCostTestsPassed": 12,
+    "syntaxCheckPassed": true,
+    "packageDryRunPassed": true,
+    "gitDiffCheckPassed": true
+  }
+}
