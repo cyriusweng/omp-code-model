@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { installSessionMode, STATE_TYPE } from '../src/session-mode.mjs';
 import codeSession from '../src/index.mjs';
 
-const root = process.env.TEST_ROOT;
-if (!root?.startsWith('/Volumes/Cyrius-4T/10-Active/omp/')) throw new Error('Set TEST_ROOT to the external-drive test directory.');
+const root = process.env.TEST_ROOT ?? tmpdir();
 const models = [
   { provider: 'main', id: 'reasoner', input: ['text'], reasoning: true, thinking: { efforts: ['medium', 'xhigh'] } },
   { provider: 'code', id: 'coder', input: ['text'], reasoning: true, thinking: { efforts: ['low', 'medium', 'high'] } },

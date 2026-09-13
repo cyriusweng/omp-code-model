@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import {
   CONFIG_PATH,
   EFFORTS,
@@ -11,10 +12,7 @@ import {
   validateConfig,
 } from '../src/configuration.mjs';
 
-const root = process.env.TEST_ROOT;
-if (!root?.startsWith('/Volumes/Cyrius-4T/10-Active/omp/')) {
-  throw new Error('Set TEST_ROOT to the external-drive test directory.');
-}
+const root = process.env.TEST_ROOT ?? tmpdir();
 
 async function fixture(initial) {
   const dir = await mkdtemp(`${root}/config-`);
