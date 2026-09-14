@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { installSessionMode, STATE_TYPE } from '../src/session-mode.mjs';
+import {
+  formatModelStringWithRouting,
+  installSessionMode,
+  STATE_TYPE,
+} from '../src/session-mode.mjs';
 import codeSession from '../src/index.mjs';
 
 const root = process.env.TEST_ROOT ?? tmpdir();
@@ -279,4 +283,236 @@ test('command context with spread frozen model switches and restores via live mo
   await assert.rejects(f.mode.run('start', frozenCtx2, controller.signal), /abort/i);
   assert.equal(f.active.id, 'reasoner');
   assert.equal(f.state(), null);
+});
+
+test('preserves routed model identity across coding phase and restoration', async () => {
+  const routedModel = {
+    provider: 'openrouter',
+    id: 'routed-reasoner',
+    compat: { openRouterRouting: { only: ['cerebras'] } },
+  };
+  const f = await fixture();
+  f.active = routedModel;
+  f.history[0].message = { role: 'user', content: 'Preserve route.' };
+  models.push(routedModel);
+  const originalSetModel = f.pi.setModel;
+  f.pi.setModel = async (model, options) => originalSetModel(model, options);
+  const mode = installSessionMode(f.pi, { configPath: f.configPath });
+
+  try {
+    const startResult = await mode.run('start', f.ctx);
+    assert.equal(startResult.changed, true);
+    assert.equal(f.active.id, 'coder');
+    assert.equal(f.state().original.selector, 'openrouter/routed-reasoner@cerebras');
+
+    const finishResult = await mode.run('finish', f.ctx);
+    assert.equal(finishResult.changed, true);
+    assert.equal(f.active.id, 'routed-reasoner');
+    assert.equal(f.active.compat.openRouterRouting.only[0], 'cerebras');
+    assert.equal(f.state(), null);
+  } finally {
+    const index = models.indexOf(routedModel);
+    if (index !== -1) models.splice(index, 1);
+  }
+});
+
+test('preserves active role across coding phase switches and restores original role', async () => {
+  const f = await fixture();
+  f.history.push({
+    type: 'model_change',
+    model: `${models[0].provider}/${models[0].id}`,
+    role: 'slow',
+  });
+  const setModelCalls = [];
+  const originalSetModel = f.pi.setModel;
+  f.pi.setModel = async (model, options) => {
+    setModelCalls.push({ model: model.id, options });
+    return originalSetModel(model);
+  };
+  const mode = installSessionMode(f.pi, { configPath: f.configPath });
+
+  await mode.run('start', f.ctx);
+  assert.equal(f.state().original.role, 'slow');
+  assert.deepEqual(setModelCalls[0], { model: 'coder', options: { ephemeral: true } });
+
+  await mode.run('finish', f.ctx);
+  assert.deepEqual(setModelCalls[1], { model: 'reasoner', options: { role: 'slow' } });
+  assert.equal(f.state(), null);
+});
+
+test('navigation preparation returns rollback and retains coding phase upon cancellation', async () => {
+  const f = await fixture();
+  let beforeNavHandler;
+  const mode = installSessionMode(f.pi, {
+    configPath: f.configPath,
+    registerBeforeNavigation: handler => { beforeNavHandler = handler; },
+  });
+  await mode.run('start', f.ctx);
+  assert.equal(typeof beforeNavHandler, 'function');
+
+  const preparation = await beforeNavHandler(f.ctx);
+  assert.equal(typeof preparation?.rollback, 'function');
+  assert.equal(f.active.id, 'reasoner');
+  assert.equal(f.state(), null);
+
+  preparation.rollback();
+  const status = await mode.run('status', f.ctx);
+  assert.match(status.message, /Current phase: coding/);
+});
+
+test('awaits in-flight stop restoration before idle when internal finalizer is registered', async () => {
+  const f = await fixture();
+  let beforeIdleHandler;
+  const mode = installSessionMode(f.pi, {
+    configPath: f.configPath,
+    registerBeforeIdle: handler => { beforeIdleHandler = handler; },
+  });
+  await mode.run('start', f.ctx);
+  assert.equal(typeof beforeIdleHandler, 'function');
+
+  let resolveSetModel;
+  f.pi.setModel = async model => {
+    if (model.id === 'reasoner') {
+      await new Promise(resolve => { resolveSetModel = resolve; });
+    }
+    f.active = model;
+    return true;
+  };
+
+  const stopHandlers = f.handlers.get('session_stop') ?? [];
+  const stopPromise = Promise.all(stopHandlers.map(h => h({
+    type: 'session_stop',
+    last_assistant_message: { role: 'assistant', stopReason: 'stop' },
+    signal: new AbortController().signal,
+  }, f.ctx)));
+
+  let idleSettled = false;
+  const idlePromise = beforeIdleHandler({ type: 'session_before_idle', willContinue: false }, f.ctx).then(res => {
+    idleSettled = true;
+    return res;
+  });
+
+  await new Promise(resolve => setTimeout(resolve, 10));
+  assert.equal(idleSettled, false);
+
+  resolveSetModel();
+  const stopResults = await stopPromise;
+  assert.equal(stopResults[0], undefined);
+
+  const idleResult = await idlePromise;
+  assert.equal(idleSettled, true);
+  assert.equal(idleResult?.continue, true);
+  assert.match(idleResult?.additionalContext ?? '', /Review the actual changes and recorded checks/);
+  assert.equal(f.active.id, 'reasoner');
+});
+
+test('restores retry primary when a fallback starts the coding phase', async () => {
+  const f = await fixture();
+  f.active = models[2]; // plain/simple
+  f.history.push({ type: 'model_change', model: 'plain/simple', resolvedModelIsFallback: true });
+
+  const mode = installSessionMode(f.pi, {
+    configPath: f.configPath,
+    getRetryFallbackPrimary: () => ({
+      selector: `${models[0].provider}/${models[0].id}`,
+      effort: 'xhigh',
+      fallbackEffort: 'low',
+    }),
+  });
+
+  await mode.run('start', f.ctx);
+  assert.equal(f.active.id, 'coder');
+  assert.equal(f.state().original.id, 'reasoner');
+  assert.equal(f.state().original.effort, 'xhigh');
+
+  const finished = await mode.run('finish', f.ctx);
+  assert.equal(finished.changed, true);
+  assert.equal(f.active.id, 'reasoner');
+  assert.equal(f.effort, 'xhigh');
+});
+
+test('modern host records phase ownership when only effort changes', async () => {
+  const f = await fixture();
+  await writeFile(f.configPath, JSON.stringify({
+    defaultProfile: 'current',
+    profiles: { current: { provider: 'main', model: 'reasoner', reasoning: 'medium' } },
+  }));
+  const calls = [];
+  f.pi.setModel = async (model, options) => {
+    calls.push({ model: model.id, options });
+    f.active = model;
+    f.history.push({
+      type: 'model_change',
+      model: `${model.provider}/${model.id}`,
+      role: options?.ephemeral ? 'fallback' : options?.role,
+    });
+    return true;
+  };
+  const mode = installSessionMode(f.pi, { configPath: f.configPath });
+
+  await mode.run('start', f.ctx);
+  assert.equal(f.active.id, 'reasoner');
+  assert.equal(f.effort, 'medium');
+  assert.deepEqual(calls[0], { model: 'reasoner', options: { ephemeral: true } });
+
+  await mode.run('finish', f.ctx);
+  assert.equal(f.active.id, 'reasoner');
+  assert.equal(f.effort, 'xhigh');
+  assert.deepEqual(calls[1], { model: 'reasoner', options: { role: 'default' } });
+});
+
+test('retry primary must resolve to the exact recorded model', async () => {
+  const f = await fixture();
+  const sibling = { ...models[0], id: 'reasoner-new' };
+  f.active = models[2];
+  f.history.push({ type: 'model_change', model: 'plain/simple', resolvedModelIsFallback: true });
+  f.ctx.models.list = () => [models[1], models[2], sibling];
+  f.ctx.models.resolve = selector => selector === 'main/reasoner' ? sibling : undefined;
+  f.ctx.modelRegistry.find = (provider, id) =>
+    f.ctx.models.list().find(model => model.provider === provider && model.id === id);
+  const mode = installSessionMode(f.pi, {
+    configPath: f.configPath,
+    getRetryFallbackPrimary: () => ({ selector: 'main/reasoner', effort: 'xhigh' }),
+  });
+
+  await assert.rejects(mode.run('start', f.ctx), /catalogue must contain main\/reasoner/);
+  assert.equal(f.active.id, 'simple');
+  assert.equal(f.state(), undefined);
+});
+
+test('route formatter limits compat routing to aggregator hosts', () => {
+  const compat = { openRouterRouting: { only: ['cerebras'] } };
+  assert.equal(formatModelStringWithRouting({
+    provider: 'openrouter',
+    id: 'routed',
+    compat,
+  }), 'openrouter/routed@cerebras');
+  assert.equal(formatModelStringWithRouting({
+    provider: 'custom',
+    id: 'native',
+    compat,
+  }), 'custom/native');
+});
+
+
+test('literal model ID ending in an effort name wins over suffix parsing', async () => {
+  const f = await fixture();
+  const literal = { ...models[0], id: 'reasoner:max' };
+  f.active = models[2];
+  f.history.push({ type: 'model_change', model: 'plain/simple', resolvedModelIsFallback: true });
+  f.ctx.models.list = () => [models[1], models[2], literal];
+  f.ctx.models.resolve = selector => selector === 'main/reasoner' ? models[0] : undefined;
+  f.ctx.modelRegistry.find = (provider, id) =>
+    f.ctx.models.list().find(model => model.provider === provider && model.id === id);
+  const mode = installSessionMode(f.pi, {
+    configPath: f.configPath,
+    getRetryFallbackPrimary: () => ({ selector: 'main/reasoner:max', effort: 'xhigh' }),
+  });
+
+  await mode.run('start', f.ctx);
+  assert.equal(f.state().original.id, 'reasoner:max');
+
+  await mode.run('finish', f.ctx);
+  assert.equal(f.active.id, 'reasoner:max');
+  assert.equal(f.effort, 'xhigh');
 });

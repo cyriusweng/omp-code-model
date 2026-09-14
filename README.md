@@ -54,7 +54,7 @@ git clone https://github.com/cyriusweng/omp-code-model.git
 omp plugin link ./omp-code-model
 ```
 
-OMP 18.1.19 is the compatibility floor. OMP versions containing [oh-my-pi PR #11997](https://github.com/can1357/oh-my-pi/pull/11997) provide the awaited `session_before_idle` hook and exact fresh-session `auto` selector. OMP 18.1.19 uses the established `session_stop` and `agent_end` lifecycle paths.
+OMP 18.1.19 is the compatibility floor. The extension feature-detects newer model-switch APIs. OMP versions containing [oh-my-pi PR #11997](https://github.com/can1357/oh-my-pi/pull/11997) add exact routed-model restoration and role-aware phase ownership; the built-in integration also supplies retry-primary, pre-idle and transactional navigation hooks. OMP 18.1.19 uses the established `session_stop`, `agent_end` and public navigation lifecycle paths.
 
 ## Configure
 
@@ -86,9 +86,9 @@ The main model usually calls the `code-model` tool itself. `start` is a standalo
 
 ## Reliability behaviour
 
-The extension records the original model, configured effort selector and coding target before switching. It restores that snapshot at phase completion. A model or effort selection made through another OMP control becomes the retained selection. Automatic retry fallback metadata keeps restoration tied to the recorded main model.
+The extension records the original model, configured effort selector and coding target before switching. On OMP versions containing oh-my-pi PR #11997, the snapshot also retains routed provider identity (`@upstream`) and active role (`slow`, `default`), and temporary switches carry the ephemeral `fallback` role. A model or effort selection made through another OMP control becomes the retained selection. Host integrations that supply retry-primary metadata keep restoration tied to the recorded primary model when fallback routing started the phase.
 
-An interrupted switch stores a recoverable phase marker. Session start, switch, tree and branch events inspect this marker and restore the recorded model state. The configuration writer uses an atomic rename and detects a concurrent menu update before saving.
+An interrupted switch stores a recoverable phase marker. Session start, switch, tree and branch events inspect this marker and restore the recorded model state. Integrated navigation hooks support transactional rollback when a prepared navigation is aborted. The configuration writer uses an atomic rename and detects a concurrent menu update before saving.
 
 ## Session-cost reporting
 
