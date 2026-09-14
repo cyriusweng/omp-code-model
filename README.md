@@ -31,8 +31,6 @@ Applying GPT-6-Astra's listed rates to every observed token produces a price-nor
 
 The final review passed 63 repository tests, including 12 focused tests for the new command. [Machine-readable usage, rates and verification data](demo/session-cost.json) accompany the recording.
 
-For a Chinese social post, use the [portrait cost card](demo/moments-zh.png) with the [ready-to-post Moments copy](demo/moments-zh.txt).
-
 The extension provides:
 
 - an essential `code-model` tool with `start`, `finish` and `status` actions;
