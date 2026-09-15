@@ -86,6 +86,7 @@ export function installSessionMode(pi, { configPath, getRetryFallbackPrimary, re
   let state;
   let busy = false;
   let inFlight;
+  let phaseSwitchEntry;
   let reviewPending = false;
   const usesInternalFinalizer = typeof registerBeforeIdle === 'function';
   const supportsSetModelOptions = pi.setModel.length >= 2;
@@ -184,6 +185,7 @@ export function installSessionMode(pi, { configPath, getRetryFallbackPrimary, re
   function save(next) {
     pi.appendEntry(STATE_TYPE, next);
     state = next;
+    if (!next) phaseSwitchEntry = undefined;
   }
 
   async function guarded(operation) {
@@ -241,9 +243,15 @@ export function installSessionMode(pi, { configPath, getRetryFallbackPrimary, re
       ? retryFallback.fallbackEffort
       : previous.coding.effort;
     const latest = branch(ctx).findLast(entry => entry.type === 'model_change');
+    // Hosts whose extension setModel action drops the ephemeral option
+    // serialize the phase's own switch as a plain role change; while that
+    // exact entry is still the newest model change, no user switch has
+    // superseded it and the phase keeps ownership.
+    const latestMatchesCoding = phaseSwitchEntry !== undefined && latest === phaseSwitchEntry;
     const codingRoleMatches = previous.original.role === undefined ||
       latest?.role === undefined ||
-      latest?.role === EPHEMERAL_MODEL_CHANGE_ROLE;
+      latest?.role === EPHEMERAL_MODEL_CHANGE_ROLE ||
+      latestMatchesCoding;
     const retryPrimaryMatchesCoding = retryFallback === undefined || matchesRetryPrimary(retryFallback.selector, previous.coding, ctx);
     const codingStateMatches =
       (codingRoleMatches && sameModel(active, previous.coding) && effort === previous.coding.effort) ||
@@ -308,6 +316,7 @@ export function installSessionMode(pi, { configPath, getRetryFallbackPrimary, re
       if (sessionId(ctx) !== id) throw new Error('The session changed during the model switch.');
       if (!state) throw new Error('The coding phase state was cleared during the model switch.');
       save({ ...state, phase: 'coding' });
+      phaseSwitchEntry = branch(ctx).findLast(entry => entry.type === 'model_change');
     } catch (error) {
       if (sessionId(ctx) === id) {
         try {

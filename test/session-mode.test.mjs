@@ -516,3 +516,42 @@ test('literal model ID ending in an effort name wins over suffix parsing', async
   assert.equal(f.active.id, 'reasoner:max');
   assert.equal(f.effort, 'xhigh');
 });
+
+test('restores when the host serializes the ephemeral switch with a default role', async () => {
+  const f = await fixture();
+  const originalSetModel = f.pi.setModel;
+  f.pi.setModel = async (model, options) => {
+    const result = await originalSetModel(model);
+    if (result !== false) {
+      const entry = f.history[f.history.length - 1];
+      if (entry?.type === 'model_change') entry.role = options?.role ?? 'default';
+    }
+    return result;
+  };
+  const mode = installSessionMode(f.pi, { configPath: f.configPath });
+
+  const startResult = await mode.run('start', f.ctx);
+  assert.equal(startResult.changed, true);
+  assert.equal(f.active.id, 'coder');
+
+  const finishResult = await mode.run('finish', f.ctx);
+  assert.equal(finishResult.changed, true);
+  assert.equal(f.active.id, models[0].id);
+  assert.equal(f.state(), null);
+});
+
+test('preserves a role selection of the coding model made during the phase', async () => {
+  const f = await fixture();
+  const mode = installSessionMode(f.pi, { configPath: f.configPath });
+  await mode.run('start', f.ctx);
+  f.history.push({
+    type: 'model_change',
+    model: `${models[1].provider}/${models[1].id}`,
+    role: 'slow',
+  });
+
+  const finishResult = await mode.run('finish', f.ctx);
+  assert.equal(finishResult.changed, false);
+  assert.equal(f.active.id, 'coder');
+  assert.equal(f.state(), null);
+});
