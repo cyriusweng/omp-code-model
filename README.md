@@ -29,7 +29,7 @@ The current demo records one complete task launched with `omp`. GPT-6-Astra plan
 
 Applying GPT-6-Astra's listed rates to every observed token produces a price-normalised estimate of **$13.521413**. The recorded model split is **$9.181880 lower**, a **67.9% reduction** for the complete conversation. The coding phase alone costs 92.5% less at the recorded Gemini rates. This comparison holds token counts constant; an all-GPT run can follow a different execution path and produce a different token count.
 
-The final review passed 63 repository tests, including 12 focused tests for the new command. [Machine-readable usage, rates and verification data](demo/session-cost.json) accompany the recording.
+The recording and its machine-readable usage data remain in `demo/session-cost.json`.
 
 The extension provides:
 
@@ -54,7 +54,7 @@ git clone https://github.com/cyriusweng/omp-code-model.git
 omp plugin link ./omp-code-model
 ```
 
-OMP 18.1.19 is the compatibility floor. The extension feature-detects newer model-switch APIs. OMP versions containing [oh-my-pi PR #11997](https://github.com/can1357/oh-my-pi/pull/11997) add exact routed-model restoration and role-aware phase ownership; the built-in integration also supplies retry-primary, pre-idle and transactional navigation hooks. OMP 18.1.19 uses the established `session_stop`, `agent_end` and public navigation lifecycle paths.
+OMP 18.2.0 is the compatibility target.
 
 ## Configure
 
@@ -86,66 +86,9 @@ The main model usually calls the `code-model` tool itself. `start` is a standalo
 
 ## Reliability behaviour
 
-The extension records the original model, configured effort selector and coding target before switching. On OMP versions containing oh-my-pi PR #11997, the snapshot also retains routed provider identity (`@upstream`) and active role (`slow`, `default`), and temporary switches carry the ephemeral `fallback` role. A model or effort selection made through another OMP control becomes the retained selection. Host integrations that supply retry-primary metadata keep restoration tied to the recorded primary model when fallback routing started the phase.
+The extension records the original model and configured effort before entering a coding phase. A model or effort selected through another OMP control remains active when the phase ends. Retry fallback entries remain phase-owned so a repeated `start` keeps the original restoration target.
 
-An interrupted switch stores a recoverable phase marker. Session start, switch, tree and branch events inspect this marker and restore the recorded model state. Integrated navigation hooks support transactional rollback when a prepared navigation is aborted. The configuration writer uses an atomic rename and detects a concurrent menu update before saving.
-
-## Session-cost reporting
-
-`omp-session-cost` reads an OMP session JSONL file and groups input, output, cache-read and cache-write tokens, plus recorded costs, by provider and model. It also prints a total row.
-
-### Usage
-
-After installation, run:
-
-```sh
-omp-session-cost path/to/session.jsonl
-```
-
-Local repository checkouts can run:
-
-```sh
-npm run session-cost -- path/to/session.jsonl
-```
-
-For standard input:
-
-```sh
-cat path/to/session.jsonl | omp-session-cost -
-```
-
-### Options
-
-- `-j, --json`: Print model rows and totals as JSON.
-- `-h, --help`: Print usage information and exit codes.
-- `--`: Treat the next argument as the file path, including a name that starts with `-`.
-
-### Output format
-
-The table uses aligned columns:
-
-- `Provider`: The AI provider identifier.
-- `Model`: The model name or identifier.
-- `Input`: Billable input tokens.
-- `Output`: Output and thinking tokens.
-- `Cache Read`: Tokens read from provider prompt cache.
-- `Cache Write`: Tokens written to provider prompt cache.
-- `Cost (USD)`: The sum of recorded `usage.cost.total` values, displayed to six decimal places.
-- `TOTAL`: Summary row aggregating the four token categories and recorded costs.
-
-### Accounting scope and validation
-
-The report reads every assistant `message` entry that carries usage and every auxiliary `model_usage` entry in the file. It groups historical branches by each entry's recorded `provider` and `model`. Costs are the sum of `usage.cost.total`. JSON output keeps JavaScript numeric precision; the table rounds costs to six decimal places.
-
-The parser skips user messages, tool results, extension metadata and assistant messages without usage. To report a subagent session, supply its JSONL file. A header-only session produces a zero total.
-
-Input must be UTF-8 JSONL with a session header containing an `id`; one title slot may precede the header. Blank lines and CRLF line endings are accepted. Usage records require provider and model strings, four non-negative safe-integer token fields, and a finite non-negative `usage.cost.total`. Parse and accounting errors include the source line on standard error. Output is written after the complete file passes validation.
-
-### Exit codes
-
-- `0`: Successful execution.
-- `1`: Invocation error, missing arguments, or file access failure.
-- `2`: Malformed session input, including invalid JSON syntax, missing session header, or corrupted usage records.
+An interrupted switch stores a recoverable phase marker. Session lifecycle events restore recorded state, navigation waits for restoration, and the configuration writer uses an atomic rename with concurrent-update detection.
 
 ## Development
 
@@ -156,11 +99,7 @@ npm test
 npm run check
 ```
 
-The test suite covers configuration integrity, full interactive menu flows, phase transitions, recovery, retry fallback, configured `auto`, extension registration, lifecycle completion and fixture-backed session-cost aggregation and CLI behaviour.
-
-## Upstream
-
-The built-in OMP implementation and runtime API additions are tracked in [can1357/oh-my-pi#11997](https://github.com/can1357/oh-my-pi/pull/11997). This repository keeps the feature installable as a focused extension and records the demonstration assets.
+The test suite covers configuration integrity, interactive menu flows, phase transitions, recovery, retry fallback, configured `auto`, extension registration and lifecycle completion.
 
 ## Licence
 

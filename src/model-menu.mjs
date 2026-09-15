@@ -195,10 +195,10 @@ export async function runCodeModel(args, ctx, { configPath = CONFIG_PATH, lang: 
       );
       if (action === undefined) return undefined;
 
-      const isProvider = action === t.tabProvider || action === 'Provider' || action === '提供商';
-      const isModel = action === t.tabModel || action === 'Model' || action === '模型';
-      const isEffort = action === t.tabEffort || action === 'Effort' || action === 'effort';
-      const isSave = action === t.tabSave || action === 'Save and Apply' || action === '保存并使用';
+      const isProvider = action === t.tabProvider;
+      const isModel = action === t.tabModel;
+      const isEffort = action === t.tabEffort;
+      const isSave = action === t.tabSave;
 
       if (isProvider) {
         menuIndex = 0;
@@ -269,7 +269,7 @@ export async function runCodeModel(args, ctx, { configPath = CONFIG_PATH, lang: 
       }
     }
   } catch (error) {
-    ctx.ui.notify(error.message, 'error');
+    ctx.ui.notify(error instanceof Error ? error.message : String(error), 'error');
     return undefined;
   }
 }
