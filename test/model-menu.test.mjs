@@ -584,3 +584,25 @@ test('routing command shows and saves the opt-in mode and fallback', async () =>
   assert.equal(f.notices.at(-1).type, 'error');
   assert.match(f.notices.at(-1).message, /routing \[off\|observe\|enforce\]/);
 });
+
+test('routing command opens an interactive mode and fallback selector', async () => {
+  const f = await fixture([
+    ({ title, options, dialog }) => {
+      assert.equal(title, 'Select Automatic Routing Mode');
+      assert.deepEqual(options.map(option => option.label), ['off', 'observe', 'enforce']);
+      assert.equal(dialog.initialIndex, 0);
+      return 'enforce';
+    },
+    ({ title, options, dialog }) => {
+      assert.equal(title, 'Select Routing Fallback');
+      assert.deepEqual(options.map(option => option.label), ['main_agent', 'code_model']);
+      assert.equal(dialog.initialIndex, 0);
+      return 'main_agent';
+    },
+  ], true, seed, 'en');
+
+  await f.run('routing');
+  assert.deepEqual((await f.read()).routing, { mode: 'enforce', fallback: 'main_agent' });
+  assert.match(f.notices.at(-1).message, /Saved automatic routing: enforce/);
+  noErrors(f);
+});

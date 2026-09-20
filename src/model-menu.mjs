@@ -25,6 +25,17 @@ export const MESSAGES = {
     effortAuto: 'Model default',
     effortLevel: label => `${label} reasoning level`,
     modelsCount: count => `${count} models`,
+    selectRoutingModeTitle: 'Select Automatic Routing Mode',
+    selectRoutingFallbackTitle: 'Select Routing Fallback',
+    routingModeDescription: {
+      off: 'Skip automatic Jev routing',
+      observe: 'Record Jev recommendations and keep the current model',
+      enforce: 'Apply Jev coding-phase recommendations automatically',
+    },
+    routingFallbackDescription: {
+      main_agent: 'Keep the main agent when Jev is unavailable',
+      code_model: 'Enter the configured coding phase when eligible',
+    },
     routingNotice: (mode, fallback, configPath) =>
       `Automatic routing: ${mode}; fallback: ${fallback}. Config: ${configPath}`,
     routingSaved: (mode, fallback) =>
@@ -59,6 +70,17 @@ export const MESSAGES = {
     effortAuto: '模型默认',
     effortLevel: label => `${label} 推理等级`,
     modelsCount: count => `${count} 个模型`,
+    selectRoutingModeTitle: '选择自动路由模式',
+    selectRoutingFallbackTitle: '选择路由 fallback',
+    routingModeDescription: {
+      off: '关闭自动 Jev 路由',
+      observe: '记录 Jev 建议并保持当前模型',
+      enforce: '自动执行 Jev 的编码阶段建议',
+    },
+    routingFallbackDescription: {
+      main_agent: 'Jev 暂时不可用时保持主代理',
+      code_model: '模型与额度可用时进入已配置的编码阶段',
+    },
     notSelected: '待选择',
     pendingSelection: '待完成选择',
     routingNotice: (mode, fallback, configPath) =>
@@ -158,6 +180,27 @@ async function pickModel(ctx, current, t, { all = false } = {}) {
   return model;
 }
 
+async function pickRouting(ctx, current, t) {
+  const modes = [...ROUTING_MODES];
+  const mode = await ctx.ui.select(
+    t.selectRoutingModeTitle,
+    modes.map(label => ({ label, description: t.routingModeDescription[label] })),
+    { initialIndex: Math.max(0, modes.indexOf(current.mode)), helpText: t.help },
+  );
+  if (mode === undefined) return undefined;
+  if (!ROUTING_MODES.has(mode)) throw new Error(t.errRoutingUsage);
+
+  const fallbacks = [...ROUTING_FALLBACKS];
+  const fallback = await ctx.ui.select(
+    t.selectRoutingFallbackTitle,
+    fallbacks.map(label => ({ label, description: t.routingFallbackDescription[label] })),
+    { initialIndex: Math.max(0, fallbacks.indexOf(current.fallback)), helpText: t.help },
+  );
+  if (fallback === undefined) return undefined;
+  if (!ROUTING_FALLBACKS.has(fallback)) throw new Error(t.errRoutingUsage);
+  return { mode, fallback };
+}
+
 function showCurrent(config, ctx, configPath, t) {
   const selected = getSelection(config);
   if (!selected) {
@@ -176,8 +219,15 @@ export async function runCodeModel(args, ctx, { configPath = CONFIG_PATH, lang: 
     if (words[0] === 'routing') {
       const current = getRouting(config);
       if (words.length === 1) {
-        ctx.ui.notify(t.routingNotice(current.mode, current.fallback, configPath), 'info');
-        return config;
+        if (!ctx.hasUI) {
+          ctx.ui.notify(t.routingNotice(current.mode, current.fallback, configPath), 'info');
+          return config;
+        }
+        const routing = await pickRouting(ctx, current, t);
+        if (!routing) return undefined;
+        const updated = await updateRouting(routing, { path: configPath, expectedConfig: config });
+        ctx.ui.notify(t.routingSaved(routing.mode, routing.fallback), 'info');
+        return updated;
       }
       if (words.length > 3) throw new Error(t.errRoutingUsage);
       const routing = {
