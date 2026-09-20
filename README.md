@@ -2,6 +2,9 @@
 
 `omp-code-model` adds same-conversation coding phases to [OMP](https://github.com/can1357/oh-my-pi). The main model defines requirements and interfaces, hands implementation to a configured coding model, and returns for final review with the full history and tool state intact.
 
+> [!IMPORTANT]
+> **Jev-powered automatic routing is now built in.** Run `/code-model routing` to open a graphical selector for `off`, `observe` or `enforce` mode and the `main_agent` or `code_model` fallback. In `enforce` mode, Jev can route implementation into the configured coding model, then the original model returns for review in the same conversation.
+
 ![Code-model phase demonstration](demo/code-model-demo.gif)
 
 [Watch the complete accelerated MP4 recording](demo/code-model-demo.mp4).
@@ -37,7 +40,7 @@ The extension provides:
 - optional TypeSafe Jev routing across the current main model, the configured coding model and an explicitly authorised subagent;
 - opt-in `before_agent_start` routing modes: `off`, `observe` and `enforce`;
 - quota-aware recommendations sourced from `omp usage`, with configurable `main_agent` or `code_model` fallback;
-- a `/code-model` menu for Provider → Model → Effort → Save configuration;
+- graphical `/code-model` settings for Provider → Model → Effort → Save and a `/code-model routing` selector for mode and fallback;
 - persistent phase, recommendation and automatic-routing audit state in the session tree;
 - restoration after completion, cancellation, retry fallback, session navigation and shutdown;
 - English and Simplified Chinese menus selected from the current locale.
@@ -61,13 +64,14 @@ OMP 18.2.0 is the compatibility target.
 
 ## Configure
 
-Open the interactive selector:
+Open the graphical selectors:
 
 ```text
 /code-model
+/code-model routing
 ```
 
-The menu presents providers and models from the active OMP catalogue. Selection is stored at:
+The first menu presents providers and models from the active OMP catalogue. The routing menu configures Jev preflight behaviour and fallback. Both selections are stored at:
 
 ```text
 ~/.omp/agent/code-model.json
