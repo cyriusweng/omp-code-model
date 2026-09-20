@@ -33,9 +33,12 @@ The recording and its machine-readable usage data remain in `demo/session-cost.j
 
 The extension provides:
 
-- an essential `code-model` tool with `start`, `finish` and `status` actions;
+- an essential `code-model` tool with `recommend`, `start`, `finish` and `status` actions;
+- optional TypeSafe Jev routing across the current main model, the configured coding model and an explicitly authorised subagent;
+- opt-in `before_agent_start` routing modes: `off`, `observe` and `enforce`;
+- quota-aware recommendations sourced from `omp usage`, with configurable `main_agent` or `code_model` fallback;
 - a `/code-model` menu for Provider → Model → Effort → Save configuration;
-- persistent phase state in the session tree;
+- persistent phase, recommendation and automatic-routing audit state in the session tree;
 - restoration after completion, cancellation, retry fallback, session navigation and shutdown;
 - English and Simplified Chinese menus selected from the current locale.
 
@@ -77,12 +80,19 @@ Useful commands:
 ```text
 /code-model show
 /code-model models
+/code-model recommend implement the requested change and run targeted tests
+/code-model routing
+/code-model routing observe main_agent
+/code-model routing enforce main_agent
+/code-model routing off
 /code-model status
 /code-model start
 /code-model finish
 ```
 
-The main model usually calls the `code-model` tool itself. `start` is a standalone tool call before implementation. `finish` is a standalone tool call after targeted checks. The active OMP approval policy continues to govern tool use.
+The main model usually calls the `code-model` tool itself. `recommend` is advisory and sends its task summary plus sanitised model and quota facts to TypeSafe when `/login typesafe` or `TYPESAFE_API_KEY` provides a credential. Its result identifies the judgment backend, confidence, quota state and fallback reason. `start` is a standalone tool call before implementation; its optional `effort` applies the recommendation for that coding phase, while omission uses the saved profile. `finish` is a standalone tool call after targeted checks. The active OMP approval policy continues to govern tool use.
+
+Automatic routing defaults to `off`. `observe` asks Jev before every user-containing prompt and records a receipt while preserving the current model. `enforce` performs the same judgment and directly enters the configured coding phase when Jev selects `code_model`; the existing phase lifecycle restores the original model and effort. The fallback runs when the TypeSafe credential or request is unavailable. `main_agent` is the conservative fallback, while `code_model` enters the configured coding phase whenever its model and quota remain eligible.
 
 ## Reliability behaviour
 
@@ -99,7 +109,7 @@ npm test
 npm run check
 ```
 
-The test suite covers configuration integrity, interactive menu flows, phase transitions, recovery, retry fallback, configured `auto`, extension registration and lifecycle completion.
+The test suite covers configuration integrity, interactive menu flows, manual and automatic Jev routing, prompt-hook idempotency, fallback behavior, phase transitions, recovery, retry fallback, configured `auto`, extension registration and lifecycle completion.
 
 ## Licence
 

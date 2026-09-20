@@ -6,8 +6,10 @@ import {
   CONFIG_PATH,
   EFFORTS,
   getModelEfforts,
+  getRouting,
   getSelection,
   loadConfig,
+  updateRouting,
   updateSelection,
   validateConfig,
 } from '../src/configuration.mjs';
@@ -168,4 +170,43 @@ test('first selection creates a portable configuration file', async () => {
     model: 'gpt-6-astra',
     reasoning: 'high',
   });
+});
+
+test('automatic routing defaults off and persists an explicit fallback atomically', async () => {
+  const f = await fixture({
+    defaultProfile: 'current',
+    profiles: {
+      current: { provider: 'test', model: 'model-a', reasoning: 'medium' },
+    },
+  });
+  assert.deepEqual(getRouting(await f.read()), { mode: 'off', fallback: 'main_agent' });
+
+  const expectedConfig = await f.read();
+  const updated = await updateRouting(
+    { mode: 'observe', fallback: 'code_model' },
+    { path: f.path, expectedConfig },
+  );
+  assert.deepEqual(getRouting(updated), { mode: 'observe', fallback: 'code_model' });
+  assert.equal(updated.profiles.current.model, 'model-a');
+  assert.deepEqual(getRouting(await f.read()), { mode: 'observe', fallback: 'code_model' });
+});
+
+test('invalid automatic routing settings preserve the configuration bytes', async () => {
+  const initial = {
+    defaultProfile: 'current',
+    profiles: {
+      current: { provider: 'test', model: 'model-a', reasoning: 'medium' },
+    },
+  };
+  const f = await fixture(initial);
+  const before = await f.raw();
+  await assert.rejects(
+    updateRouting({ mode: 'always', fallback: 'main_agent' }, { path: f.path }),
+    /Valid automatic routing/,
+  );
+  await assert.rejects(
+    updateRouting({ mode: 'enforce', fallback: 'random' }, { path: f.path }),
+    /Valid automatic routing/,
+  );
+  assert.equal(await f.raw(), before);
 });

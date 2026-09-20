@@ -4,6 +4,7 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { installSessionMode, STATE_TYPE } from '../src/session-mode.mjs';
 import codeSession from '../src/index.mjs';
+import { ROUTING_STATE_TYPE } from '../src/routing.mjs';
 
 const root = process.env.TEST_ROOT ?? tmpdir();
 const models = [
@@ -19,9 +20,9 @@ async function fixture() {
   const history = [{ type: 'message', message: { role: 'user', content: 'Preserve this exact conversation.' } }];
   const handlers = new Map(), tools = [], commands = new Map(), notices = [], changes = [];
   const f = { history, handlers, tools, commands, notices, changes, configPath, active: models[0], effort: 'xhigh', id: 'session-one', idle: true };
-  const schema = { default() { return this; } };
+  const schema = { default() { return this; }, optional() { return this; } };
   const pi = {
-    zod: { enum: () => schema, object: () => schema },
+    zod: { enum: () => schema, object: () => schema, string: () => schema, boolean: () => schema },
     on(name, fn) { const group = handlers.get(name) ?? []; group.push(fn); handlers.set(name, group); },
     registerTool(definition) { tools.push(definition); },
     registerCommand(name, definition) { commands.set(name, definition); },
@@ -40,8 +41,9 @@ async function fixture() {
       return true;
     },
   };
-  const ctx = { get model() { return f.active; },
-    models: { current: () => f.active },
+  const ctx = {
+    get model() { return f.active; },
+    models: { current: () => f.active, list: () => models },
     hasUI: true, isIdle: () => f.idle,
     sessionManager: { getSessionId: () => f.id, getBranch: () => history },
     modelRegistry: { find: (provider, id) => models.find(model => model.provider === provider && model.id === id) },
@@ -49,7 +51,7 @@ async function fixture() {
   };
   f.pi = pi; f.ctx = ctx;
   f.mode = installSessionMode(pi, { configPath });
-  f.run = (action, signal) => f.mode.run(action, ctx, signal);
+  f.run = (action, signal, runOptions) => f.mode.run(action, ctx, signal, runOptions);
   f.emit = async (event, details = {}) => {
     const result = [];
     for (const handler of handlers.get(event) ?? []) result.push(await handler({
@@ -85,6 +87,17 @@ test('nested start is idempotent and a saved selection applies to the next phase
   assert.equal((await f.run('start')).changed, false);
   assert.equal(f.effort, 'medium'); assert.deepEqual(f.changes, ['coder']);
   await f.run('finish'); await f.run('start'); assert.equal(f.effort, 'low');
+});
+
+test('start accepts a supported one-phase effort without changing the saved profile', async () => {
+  const f = await fixture();
+  const before = await readFile(f.configPath, 'utf8');
+  await f.run('start', undefined, { effort: 'high' });
+  assert.equal(f.effort, 'high');
+  assert.equal(f.state().coding.effort, 'high');
+  assert.equal(await readFile(f.configPath, 'utf8'), before);
+  await f.run('finish');
+  assert.equal(f.effort, 'xhigh');
 });
 
 test('same-model lower effort avoids a model/auth reset and restores the original effort', async () => {
@@ -177,8 +190,16 @@ test('extension registers the phase tool and its configuration command', async (
   const f = await fixture(); f.handlers.clear(); codeSession(f.pi, { configPath: f.configPath });
   assert.deepEqual(f.tools.map(tool => tool.name), ['code-model']);
   const tool = f.tools[0];
-  const result = await tool.execute('test', { action: 'start' }, undefined, undefined, f.ctx);
-  assert.equal(result.details.changed, true); assert.equal(f.active.id, 'coder');
+  const recommendation = await tool.execute('route', {
+    action: 'recommend',
+    task: 'Implement a focused code change and run its targeted test.',
+    useJev: false,
+  }, undefined, undefined, f.ctx);
+  assert.equal(recommendation.details.route, 'main_agent');
+  assert.equal(recommendation.details.judgment.backend, 'deterministic');
+  assert.equal(f.history.findLast(entry => entry.customType === ROUTING_STATE_TYPE).data.advisory, true);
+  const result = await tool.execute('test', { action: 'start', effort: 'high' }, undefined, undefined, f.ctx);
+  assert.equal(result.details.changed, true); assert.equal(f.active.id, 'coder'); assert.equal(f.effort, 'high');
   await tool.execute('test2', { action: 'finish' }, undefined, undefined, f.ctx);
   assert.equal(f.active.id, 'reasoner');
   await f.commands.get('code-model').handler('status', f.ctx);

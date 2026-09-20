@@ -1,9 +1,17 @@
 import codeModelToolPrompt from '../prompts/code-model-tool.md' with { type: 'text' };
 import { runCodeModel } from './model-menu.mjs';
 import { installSessionMode } from './session-mode.mjs';
+import { createRoutingAdvisor } from './routing.mjs';
+import { installAutomaticRouting } from './automatic-routing.mjs';
 
 export default function codeModelExtension(pi, options = {}) {
   const session = installSessionMode(pi, options);
+  const advisor = createRoutingAdvisor(pi, options);
+  installAutomaticRouting(pi, {
+    advisor,
+    session,
+    configPath: options.configPath,
+  });
 
   pi.registerTool({
     name: 'code-model',
@@ -12,26 +20,42 @@ export default function codeModelExtension(pi, options = {}) {
     approval: 'exec',
     description: codeModelToolPrompt.trim(),
     parameters: pi.zod.object({
-      action: pi.zod.enum(['start', 'finish', 'status']).default('status'),
+      action: pi.zod.enum(['recommend', 'start', 'finish', 'status']).default('status'),
+      task: pi.zod.string().optional(),
+      allowSubagent: pi.zod.boolean().default(false),
+      useJev: pi.zod.boolean().default(true),
+      effort: pi.zod.enum(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']).optional(),
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-      const action = params?.action === 'start' || params?.action === 'finish' || params?.action === 'status'
+      const action = ['recommend', 'start', 'finish', 'status'].includes(params?.action)
         ? params.action
         : 'status';
-      const result = await session.run(action, ctx, signal);
+      const result = action === 'recommend'
+        ? await advisor.recommend({
+          task: params?.task,
+          allowSubagent: params?.allowSubagent === true,
+          useJev: params?.useJev !== false,
+        }, ctx, signal)
+        : await session.run(action, ctx, signal, { effort: params?.effort });
       return { content: [{ type: 'text', text: result.message }], details: result };
     },
   });
 
   pi.registerCommand('code-model', {
-    description: 'Configure the coding provider, model and effort; use start, finish or status for phase control.',
+    description: 'Configure the coding provider, model, effort and automatic Jev routing; use recommend, start, finish or status for phase control.',
     async handler(args, ctx) {
       const action = args.trim();
-      if (action !== 'start' && action !== 'finish' && action !== 'status') {
-        await runCodeModel(args, ctx, options);
-        return;
-      }
       try {
+        if (action === 'recommend' || action.startsWith('recommend ')) {
+          const task = action.slice('recommend'.length).trim();
+          const result = await advisor.recommend({ task, allowSubagent: false, useJev: true }, ctx);
+          ctx.ui.notify(result.message, 'info');
+          return;
+        }
+        if (action !== 'start' && action !== 'finish' && action !== 'status') {
+          await runCodeModel(args, ctx, options);
+          return;
+        }
         if (action !== 'status' && !ctx.isIdle()) {
           throw new Error('Wait for the active model call to settle; in-flight phase switches use the code-model tool.');
         }

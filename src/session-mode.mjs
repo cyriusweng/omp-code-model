@@ -105,7 +105,7 @@ export function installSessionMode(pi, { configPath } = {}) {
     const ownedFallback = retryFallbackIsActive(ctx);
 
     if (!force && !interrupted && !ownedFallback &&
-        !currentMatches(ctx, previous.coding) && !currentMatches(ctx, previous.original)) {
+      !currentMatches(ctx, previous.coding) && !currentMatches(ctx, previous.original)) {
       save(null);
       return {
         changed: false,
@@ -122,7 +122,7 @@ export function installSessionMode(pi, { configPath } = {}) {
     };
   }
 
-  async function start(ctx, signal) {
+  async function start(ctx, signal, effortOverride) {
     if (state?.sessionId === sessionId(ctx)) {
       if (state.phase !== 'coding') {
         throw new Error('The previous model switch still needs restoration. Run code-model finish first.');
@@ -143,15 +143,16 @@ export function installSessionMode(pi, { configPath } = {}) {
 
     const model = findModel(ctx, { provider: selected.provider, id: selected.model });
     if (!model || model.input?.includes('text') === false ||
-        model.supportsTools === false || model.toolUse === false) {
+      model.supportsTools === false || model.toolUse === false) {
       throw new Error('The coding model requires text input and tool support in the current catalogue.');
     }
-    if (!getModelEfforts(model).includes(selected.reasoning)) {
+    const codingEffort = effortOverride ?? selected.reasoning;
+    if (!getModelEfforts(model).includes(codingEffort)) {
       throw new Error('Select an effort supported by the current coding model.');
     }
 
     const original = snapshot(ctx);
-    const coding = { provider: model.provider, id: model.id, effort: selected.reasoning };
+    const coding = { provider: model.provider, id: model.id, effort: codingEffort };
     const id = sessionId(ctx);
     signal?.throwIfAborted();
     save({ version: 1, sessionId: id, phase: 'switching', original, coding });
@@ -183,7 +184,7 @@ export function installSessionMode(pi, { configPath } = {}) {
     };
   }
 
-  async function run(action, ctx, signal) {
+  async function run(action, ctx, signal, { effort } = {}) {
     if (action === 'status') {
       const selected = getSelection(await loadConfig(configPath));
       const configured = selected
@@ -199,7 +200,7 @@ export function installSessionMode(pi, { configPath } = {}) {
     }
 
     return guarded(async () => {
-      if (action === 'start') return start(ctx, signal);
+      if (action === 'start') return start(ctx, signal, effort);
       if (action !== 'finish') throw new Error('action must be start, finish or status.');
       const result = await restore(ctx);
       ctx.ui.notify(result.message, 'info');
@@ -278,5 +279,9 @@ export function installSessionMode(pi, { configPath } = {}) {
     }
   });
 
-  return { run };
+  function isActive(ctx) {
+    return Boolean(state && state.sessionId === sessionId(ctx));
+  }
+
+  return { run, isActive };
 }

@@ -32,18 +32,22 @@ async function fixture(steps = [], hasUI = true, initial = seed, lang = 'zh') {
     find(provider, id) { return this.models.find(model => model.provider === provider && model.id === id); },
     async getApiKey() { return 'synthetic-key'; },
   };
-  const ctx = { hasUI, modelRegistry: registry, ui: {
-    notify(message, type) { notices.push({ message, type }); },
-    async select(title, options, dialog) {
-      calls.push({ title, options, dialog });
-      assert.ok(steps.length, `Unexpected selector: ${title}`);
-      const step = steps.shift();
-      return typeof step === 'function' ? step({ title, options, dialog }) : step;
-    },
-  } };
-  return { dir, path, ctx, notices, calls, steps,
+  const ctx = {
+    hasUI, modelRegistry: registry, ui: {
+      notify(message, type) { notices.push({ message, type }); },
+      async select(title, options, dialog) {
+        calls.push({ title, options, dialog });
+        assert.ok(steps.length, `Unexpected selector: ${title}`);
+        const step = steps.shift();
+        return typeof step === 'function' ? step({ title, options, dialog }) : step;
+      },
+    }
+  };
+  return {
+    dir, path, ctx, notices, calls, steps,
     run: (args = '', opts = {}) => runCodeModel(args, ctx, { configPath: path, lang, ...opts }),
-    read: () => loadConfig(path), bytes: () => readFile(path, 'utf8') };
+    read: () => loadConfig(path), bytes: () => readFile(path, 'utf8')
+  };
 }
 function noErrors(f) {
   assert.deepEqual(f.notices.filter(notice => notice.type === 'error'), []);
@@ -194,10 +198,12 @@ test('successive provider choices replace the same setting', async () => {
 
 test('legacy active selection is migrated by its actual provider, model and effort', async () => {
   const selected = { provider: 'zai', model: 'glm-placeholder', reasoning: 'xhigh' };
-  const legacy = { ...seed, defaultProfile: 'spark', profiles: {
-    agy: seed.profiles.current, spark: selected,
-    luna: { provider: 'openai-codex', model: 'luna', reasoning: 'high' },
-  } };
+  const legacy = {
+    ...seed, defaultProfile: 'spark', profiles: {
+      agy: seed.profiles.current, spark: selected,
+      luna: { provider: 'openai-codex', model: 'luna', reasoning: 'high' },
+    }
+  };
   const f = await fixture(['保存并使用'], true, legacy, 'zh');
   const before = await f.bytes();
   assert.deepEqual(getSelection(await f.read()), selected);
@@ -558,4 +564,23 @@ test('resolveLang follows option, CODE_MODEL_LANG, LC_ALL, and LANG precedence',
       else process.env[key] = value;
     }
   }
+});
+
+test('routing command shows and saves the opt-in mode and fallback', async () => {
+  const f = await fixture([], false, seed, 'en');
+  await f.run('routing');
+  assert.match(f.notices.at(-1).message, /Automatic routing: off; fallback: main_agent/);
+
+  await f.run('routing observe code_model');
+  assert.deepEqual((await f.read()).routing, { mode: 'observe', fallback: 'code_model' });
+  assert.match(f.notices.at(-1).message, /Saved automatic routing: observe/);
+
+  await f.run('routing enforce');
+  assert.deepEqual((await f.read()).routing, { mode: 'enforce', fallback: 'code_model' });
+
+  const before = await f.bytes();
+  await f.run('routing invalid main_agent');
+  assert.equal(await f.bytes(), before);
+  assert.equal(f.notices.at(-1).type, 'error');
+  assert.match(f.notices.at(-1).message, /routing \[off\|observe\|enforce\]/);
 });

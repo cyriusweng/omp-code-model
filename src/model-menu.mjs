@@ -1,4 +1,14 @@
-import { CONFIG_PATH, getModelEfforts, getSelection, loadConfig, updateSelection } from './configuration.mjs';
+import {
+  CONFIG_PATH,
+  ROUTING_FALLBACKS,
+  ROUTING_MODES,
+  getModelEfforts,
+  getRouting,
+  getSelection,
+  loadConfig,
+  updateRouting,
+  updateSelection,
+} from './configuration.mjs';
 
 export const MESSAGES = {
   en: {
@@ -15,6 +25,10 @@ export const MESSAGES = {
     effortAuto: 'Model default',
     effortLevel: label => `${label} reasoning level`,
     modelsCount: count => `${count} models`,
+    routingNotice: (mode, fallback, configPath) =>
+      `Automatic routing: ${mode}; fallback: ${fallback}. Config: ${configPath}`,
+    routingSaved: (mode, fallback) =>
+      `Saved automatic routing: ${mode}; fallback: ${fallback}.`,
     notSelected: 'Not selected',
     pendingSelection: 'Pending selection',
     showNotice: (provider, model, reasoning, configPath) =>
@@ -25,6 +39,7 @@ export const MESSAGES = {
     errSelectProvider: 'Please select a provider from the catalogue.',
     errSelectModel: 'Please select a model from the catalogue.',
     errSelectEffort: 'Please select an effort supported by the current model.',
+    errRoutingUsage: 'Use /code-model routing [off|observe|enforce] [main_agent|code_model].',
     errSelectFirst: 'Please select a provider and model first.',
     errInteractiveOnly: 'Please open the settings menu in interactive OMP mode.',
     errUsage: 'Use /code-model to configure model and effort; /code-model show to view, /code-model models to browse models.',
@@ -46,6 +61,10 @@ export const MESSAGES = {
     modelsCount: count => `${count} 个模型`,
     notSelected: '待选择',
     pendingSelection: '待完成选择',
+    routingNotice: (mode, fallback, configPath) =>
+      `自动路由：${mode}；fallback：${fallback}。配置：${configPath}`,
+    routingSaved: (mode, fallback) =>
+      `已保存自动路由：${mode}；fallback：${fallback}。`,
     showNotice: (provider, model, reasoning, configPath) =>
       `当前代码模型：${provider}/${model} · ${reasoning}。用于同一主会话的编码阶段；/code-model start 切入，finish 恢复原模型，status 查看阶段。配置：${configPath}`,
     savedNotice: (provider, model, reasoning) =>
@@ -56,6 +75,7 @@ export const MESSAGES = {
     errSelectEffort: '请选择当前模型支持的 effort。',
     errSelectFirst: '请先选择提供商和模型。',
     errInteractiveOnly: '请在交互式 OMP 中打开设置菜单。',
+    errRoutingUsage: '请使用 /code-model routing [off|observe|enforce] [main_agent|code_model]。',
     errUsage: '请用 /code-model 设置当前模型和 effort；/code-model show 查看设置，/code-model models 打开模型列表。',
     errInvalidOption: '请选择菜单中的选项。',
   },
@@ -153,6 +173,24 @@ export async function runCodeModel(args, ctx, { configPath = CONFIG_PATH, lang: 
   try {
     const words = args.trim().split(/\s+/).filter(Boolean);
     const config = await loadConfig(configPath);
+    if (words[0] === 'routing') {
+      const current = getRouting(config);
+      if (words.length === 1) {
+        ctx.ui.notify(t.routingNotice(current.mode, current.fallback, configPath), 'info');
+        return config;
+      }
+      if (words.length > 3) throw new Error(t.errRoutingUsage);
+      const routing = {
+        mode: words[1],
+        fallback: words[2] ?? current.fallback,
+      };
+      if (!ROUTING_MODES.has(routing.mode) || !ROUTING_FALLBACKS.has(routing.fallback)) {
+        throw new Error(t.errRoutingUsage);
+      }
+      const updated = await updateRouting(routing, { path: configPath, expectedConfig: config });
+      ctx.ui.notify(t.routingSaved(routing.mode, routing.fallback), 'info');
+      return updated;
+    }
     if (words[0] === 'show' && words.length === 1) {
       showCurrent(config, ctx, configPath, t);
       return config;
