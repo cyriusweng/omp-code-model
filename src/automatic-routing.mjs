@@ -35,7 +35,13 @@ export function installAutomaticRouting(pi, {
     }, ctx);
 
     let action = routing.mode === 'observe' ? 'observed' : 'kept_main_agent';
-    if (routing.mode === 'enforce' && recommendation.route === 'code_model') {
+    const confidence = recommendation.judgment?.confidence;
+    const confidenceTooLow = routing.mode === 'enforce' &&
+      recommendation.route === 'code_model' &&
+      (!Number.isFinite(confidence) || confidence < 0.5);
+    if (confidenceTooLow) {
+      action = 'kept_main_agent_low_confidence';
+    } else if (routing.mode === 'enforce' && recommendation.route === 'code_model') {
       const transition = await session.run('start', ctx, undefined, { effort: recommendation.effort });
       automaticPhase = transition.changed || automaticPhase;
       action = transition.changed ? 'entered_code_model' : 'kept_code_model';

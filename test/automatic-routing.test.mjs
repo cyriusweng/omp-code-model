@@ -143,6 +143,36 @@ test('a later main-agent decision restores an automatically owned phase', async 
   assert.equal(f.entries.at(-1).data.action, 'restored_main_agent');
 });
 
+test('sub-threshold confidence keeps the main agent and records the reason', async () => {
+  const f = await fixture({
+    mode: 'enforce',
+    recommendations: [{ ...choice('code_model', 'high'), judgment: { ...choice().judgment, confidence: 0.02 } }],
+  });
+  await f.emit('before_agent_start', { prompt: 'Implement a cross-file change.' });
+
+  assert.deepEqual(f.transitions, []);
+  assert.equal(f.controller.automaticPhase, false);
+  const receipt = f.entries.at(-1).data;
+  assert.equal(receipt.action, 'kept_main_agent_low_confidence');
+  assert.equal(receipt.confidence, 0.02);
+});
+
+test('deterministic judgments without confidence keep the enforce threshold closed', async () => {
+  const f = await fixture({
+    mode: 'enforce',
+    recommendations: [{
+      route: 'code_model',
+      effort: 'high',
+      judgment: { backend: 'deterministic', confidence: undefined, fallbackReason: 'typesafe_credential_unavailable' },
+      quota: { state: 'available' },
+    }],
+  });
+  await f.emit('before_agent_start', { prompt: 'Implement a cross-file change.' });
+
+  assert.deepEqual(f.transitions, []);
+  assert.equal(f.entries.at(-1).data.action, 'kept_main_agent_low_confidence');
+});
+
 test('agent completion clears the prompt cache for a later identical prompt', async () => {
   const f = await fixture({
     mode: 'observe',
