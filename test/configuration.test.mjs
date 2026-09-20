@@ -179,16 +179,16 @@ test('automatic routing defaults off and persists an explicit fallback atomicall
       current: { provider: 'test', model: 'model-a', reasoning: 'medium' },
     },
   });
-  assert.deepEqual(getRouting(await f.read()), { mode: 'off', fallback: 'main_agent' });
+  assert.deepEqual(getRouting(await f.read()), { mode: 'off', fallback: 'main_agent', minConfidence: 0.5 });
 
   const expectedConfig = await f.read();
   const updated = await updateRouting(
     { mode: 'observe', fallback: 'code_model' },
     { path: f.path, expectedConfig },
   );
-  assert.deepEqual(getRouting(updated), { mode: 'observe', fallback: 'code_model' });
+  assert.deepEqual(getRouting(updated), { mode: 'observe', fallback: 'code_model', minConfidence: 0.5 });
   assert.equal(updated.profiles.current.model, 'model-a');
-  assert.deepEqual(getRouting(await f.read()), { mode: 'observe', fallback: 'code_model' });
+  assert.deepEqual(getRouting(await f.read()), { mode: 'observe', fallback: 'code_model', minConfidence: 0.5 });
 });
 
 test('invalid automatic routing settings preserve the configuration bytes', async () => {
@@ -209,4 +209,18 @@ test('invalid automatic routing settings preserve the configuration bytes', asyn
     /Valid automatic routing/,
   );
   assert.equal(await f.raw(), before);
+});
+
+test('routing menu updates retain a configured confidence threshold', async () => {
+  const f = await fixture({
+    defaultProfile: 'current',
+    profiles: { current: { provider: 'test', model: 'model-a', reasoning: 'medium' } },
+    routing: { mode: 'enforce', fallback: 'main_agent', minConfidence: 0.8 },
+  });
+  const updated = await updateRouting({ mode: 'observe', fallback: 'code_model' }, { path: f.path });
+  assert.equal(getRouting(updated).minConfidence, 0.8);
+  for (const minConfidence of [-0.1, 1.1, Number.NaN, '0.8', null]) {
+    await assert.rejects(updateRouting({ mode: 'enforce', fallback: 'main_agent', minConfidence }, { path: f.path }));
+  }
+  assert.equal(getRouting(await f.read()).minConfidence, 0.8);
 });

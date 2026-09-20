@@ -34,21 +34,30 @@ export function installAutomaticRouting(pi, {
       fallbackRoute: routing.fallback,
     }, ctx);
 
-    let action = routing.mode === 'observe' ? 'observed' : 'kept_main_agent';
+    const active = session.isActive(ctx);
+    if (!active) automaticPhase = false;
+    let action = routing.mode === 'observe' ? 'observed' : active ? 'kept_code_model' : 'kept_main_agent';
     const confidence = recommendation.judgment?.confidence;
-    const confidenceTooLow = routing.mode === 'enforce' &&
-      recommendation.route === 'code_model' &&
-      (!Number.isFinite(confidence) || confidence < 0.5);
-    if (confidenceTooLow) {
-      action = 'kept_main_agent_low_confidence';
-    } else if (routing.mode === 'enforce' && recommendation.route === 'code_model') {
-      const transition = await session.run('start', ctx, undefined, { effort: recommendation.effort });
-      automaticPhase = transition.changed || automaticPhase;
-      action = transition.changed ? 'entered_code_model' : 'kept_code_model';
-    } else if (routing.mode === 'enforce' && automaticPhase && session.isActive(ctx)) {
-      await session.run('finish', ctx);
-      automaticPhase = false;
-      action = 'restored_main_agent';
+    const confidenceValid = Number.isFinite(confidence) && confidence >= 0 && confidence <= 1;
+    const belowThreshold = recommendation.judgment?.backend === 'typesafe' &&
+      (!confidenceValid || confidence < routing.minConfidence);
+    let decisionReason = routing.mode === 'observe' ? 'observe_mode' : 'recommendation_applied';
+    if (routing.mode === 'enforce' && belowThreshold) {
+      action = active ? 'kept_code_model_low_confidence' : 'kept_main_agent_low_confidence';
+      decisionReason = confidenceValid ? 'confidence_below_threshold' : 'invalid_confidence';
+    } else if (routing.mode === 'enforce') {
+      if (recommendation.judgment?.backend === 'deterministic') decisionReason = 'configured_fallback';
+      if (recommendation.route === 'code_model') {
+        const transition = await session.run('start', ctx, undefined, { effort: recommendation.effort });
+        automaticPhase = transition.changed || automaticPhase;
+        action = transition.changed ? 'entered_code_model' : 'kept_code_model';
+      } else if (automaticPhase && active) {
+        await session.run('finish', ctx);
+        automaticPhase = false;
+        action = 'restored_main_agent';
+      } else if (active) {
+        decisionReason = 'manual_phase_preserved';
+      }
     }
 
     const receipt = {
@@ -58,7 +67,10 @@ export function installAutomaticRouting(pi, {
       recordedAt: new Date().toISOString(),
       mode: routing.mode,
       fallback: routing.fallback,
+      minConfidence: routing.minConfidence,
       route: recommendation.route,
+      effectiveRoute: session.isActive(ctx) ? 'code_model' : 'main_agent',
+      decisionReason,
       effort: recommendation.effort,
       backend: recommendation.judgment.backend,
       model: recommendation.judgment.model,
@@ -76,7 +88,7 @@ export function installAutomaticRouting(pi, {
     if (routing.mode === 'off') return undefined;
 
     const digest = promptDigest(event.prompt?.trim() || '[Image-only user prompt]');
-    const key = `${sessionId(ctx)}:${digest}:${routing.mode}:${routing.fallback}`;
+    const key = `${sessionId(ctx)}:${digest}:${routing.mode}:${routing.fallback}:${routing.minConfidence}`;
     if (prepared?.key === key) {
       await prepared.promise;
       return undefined;
@@ -93,12 +105,16 @@ export function installAutomaticRouting(pi, {
     }
   });
 
-  pi.on('agent_end', () => {
+  pi.on('agent_end', (_event, ctx) => {
     clearPreparation();
-    automaticPhase = false;
+    // The session service owns completion/retry restoration.
+    automaticPhase = automaticPhase && session.isActive(ctx);
   });
   for (const event of ['session_start', 'session_switch', 'session_tree', 'session_branch', 'session_shutdown']) {
-    pi.on(event, clearPreparation);
+    pi.on(event, () => {
+      clearPreparation();
+      automaticPhase = false;
+    });
   }
 
   return {

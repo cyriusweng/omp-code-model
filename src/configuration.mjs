@@ -9,6 +9,11 @@ export const CONFIG_PATH = process.env.OMP_CODE_MODEL_CONFIG || join(agentDir, '
 export const EFFORTS = new Set(['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'auto']);
 export const ROUTING_MODES = new Set(['off', 'observe', 'enforce']);
 export const ROUTING_FALLBACKS = new Set(['main_agent', 'code_model']);
+export const DEFAULT_MIN_CONFIDENCE = 0.5;
+
+function validMinConfidence(value) {
+ return Number.isFinite(value) && value >= 0 && value <= 1;
+}
 
 export function emptyConfig() {
  return { defaultProfile: 'current', profiles: {} };
@@ -31,8 +36,9 @@ export function validateConfig(config) {
  if (config.routing !== undefined) {
   if (!config.routing || typeof config.routing !== 'object' || Array.isArray(config.routing) ||
    !ROUTING_MODES.has(config.routing.mode) ||
-   !ROUTING_FALLBACKS.has(config.routing.fallback)) {
-   throw new Error('routing requires valid mode and fallback settings.');
+   !ROUTING_FALLBACKS.has(config.routing.fallback) ||
+   (config.routing.minConfidence !== undefined && !validMinConfidence(config.routing.minConfidence))) {
+   throw new Error('routing requires valid mode, fallback, and optional 0-1 minConfidence settings.');
   }
  }
  if (Object.keys(config.profiles).length > 0 && !Object.hasOwn(config.profiles, config.defaultProfile)) {
@@ -61,6 +67,9 @@ export function getRouting(config) {
  return {
   mode: config.routing?.mode ?? 'off',
   fallback: config.routing?.fallback ?? 'main_agent',
+  minConfidence: validMinConfidence(config.routing?.minConfidence)
+   ? config.routing.minConfidence
+   : DEFAULT_MIN_CONFIDENCE,
  };
 }
 
@@ -104,8 +113,15 @@ export async function updateRouting(routing, { path = CONFIG_PATH, expectedConfi
  if (expectedConfig && JSON.stringify(config) !== JSON.stringify(expectedConfig)) {
   throw new Error('Coding model configuration was updated in another session, please retry.');
  }
- if (!routing || !ROUTING_MODES.has(routing.mode) || !ROUTING_FALLBACKS.has(routing.fallback)) {
-  throw new Error('Valid automatic routing mode and fallback are required.');
+ if (!routing || !ROUTING_MODES.has(routing.mode) || !ROUTING_FALLBACKS.has(routing.fallback) ||
+  (routing.minConfidence !== undefined && !validMinConfidence(routing.minConfidence))) {
+  throw new Error('Valid automatic routing mode, fallback, and optional 0-1 minConfidence are required.');
  }
- return saveConfig({ ...config, routing: { mode: routing.mode, fallback: routing.fallback } }, path);
+ const persisted = {
+  ...config.routing,
+  mode: routing.mode,
+  fallback: routing.fallback,
+ };
+ if (routing.minConfidence !== undefined) persisted.minConfidence = routing.minConfidence;
+ return saveConfig({ ...config, routing: persisted }, path);
 }
