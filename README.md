@@ -100,6 +100,14 @@ Automatic routing defaults to `off`. `observe` asks Jev before every user-contai
 
 The configured fallback runs when the TypeSafe credential or request is unavailable. `main_agent` retains or restores the main phase according to phase ownership; `code_model` enters the configured coding phase when its model and quota remain eligible. This explicit fallback policy operates independently of the TypeSafe confidence threshold. Receipts record the requested route, effective route, confidence, threshold and decision reason. Automatically owned phases follow the existing completion and retry lifecycle, while manually started phases retain their explicit ownership.
 
+## Working with OMP Jev Gate
+
+[OMP Jev Gate](https://github.com/cyriusweng/omp-jev-gate) complements Code Model with a global judgment policy and a first-tool checkpoint. Code Model's Jev preflight selects the main agent or configured coding model and the coding effort. Jev Gate's separate preflight supplies decision mode, reasoning depth, verification depth and later-checkpoint likelihood, then governs `edit`, `write` and `bash`. OMP serialises both `before_agent_start` hooks before the provider request and preserves system-prompt amendments, so an automatically selected coding model receives Jev Gate's policy from its first response.
+
+Phase controls and guarded work retain separate scopes. `code-model start` can enter a coding phase while a Jev Gate turn is pending; the selected model then calls `jev-judge` when the policy's four trigger conditions hold, and the resulting disposition unlocks guarded tools for that task turn. `code-model finish` restores the original model with the same conversation history and current turn disposition. When agent completion starts a fresh review turn, automatic routing and Jev Gate each produce a new preflight and receipt.
+
+Each plugin normally issues its own focused TypeSafe request. Their fallback settings compose. With Code Model routing set to `enforce main_agent` and Jev Gate set to `enforce continue`, an unavailable routing judgment retains or restores the main executor, while an unavailable gate judgment records `degraded_continue` and lets the agent proceed with audited reasoning. Jev Gate's `enforce block` setting gives the affected turn fail-closed availability.
+
 ## Reliability behaviour
 
 The extension records the original model and configured effort before entering a coding phase. A model or effort selected through another OMP control remains active when the phase ends. Retry fallback entries remain phase-owned so a repeated `start` keeps the original restoration target.
