@@ -228,3 +228,54 @@ test('Jev can be disabled while quota facts and audit recording remain active', 
   assert.equal(f.commands.some(args => args[0] === 'token'), false);
   assert.equal(f.entries.at(-1).customType, ROUTING_STATE_TYPE);
 });
+
+test('a provider cache retains independent model-family quota pools', async () => {
+  const dir = await mkdtemp(`${root}/routing-pools-`);
+  const configPath = `${dir}/config.json`;
+  const provider = 'google-antigravity';
+  const models = ['gpt-6-astra', 'gemini-3.8-flash'].map(id => ({
+    ...codeModel, provider, id,
+  }));
+  const ctx = {
+    models: { current: () => mainModel, list: () => models },
+    modelRegistry: { find: (p, id) => models.find(model => model.provider === p && model.id === id) },
+  };
+  let usageCalls = 0;
+  const advisor = createRoutingAdvisor({ appendEntry() { } }, {
+    configPath,
+    exec: async (_command, args) => {
+      assert.equal(args[0], 'usage');
+      usageCalls++;
+      return {
+        code: 0, stdout: JSON.stringify({
+          reports: [{
+            provider, limits: [
+              { id: `${provider}:openai:weekly`, amount: { remainingFraction: 0.7 }, status: 'ok' },
+              { id: `${provider}:google:weekly`, amount: { remainingFraction: 0 }, status: 'exhausted' },
+            ], metadata: {},
+          }]
+        })
+      };
+    },
+  });
+  async function select(model) {
+    await writeFile(configPath, JSON.stringify({
+      defaultProfile: 'current', profiles: { current: { provider, model, reasoning: 'medium' } },
+    }));
+    return advisor.recommend({ task: 'Implement.', useJev: false }, ctx);
+  }
+  assert.equal((await select('gpt-6-astra')).quota.state, 'available');
+  assert.equal((await select('gemini-3.8-flash')).quota.state, 'exhausted');
+  assert.equal((await select('gpt-6-astra')).quota.minimumRemainingFraction, 0.7);
+  assert.equal(usageCalls, 1);
+});
+
+test('a pre-aborted recommendation performs zero commands or requests', async () => {
+  const f = await fixture({ token: 'ts_test_secret_credential' });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(f.advisor.recommend({ task: 'Implement.' }, f.ctx, controller.signal), { name: 'AbortError' });
+  assert.equal(f.commands.length, 0);
+  assert.equal(f.requests.length, 0);
+  assert.equal(f.entries.length, 0);
+});

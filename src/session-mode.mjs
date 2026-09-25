@@ -62,8 +62,14 @@ export function installSessionMode(pi, { configPath } = {}) {
   }
 
   function save(next) {
+    const previous = state;
     pi.appendEntry(STATE_TYPE, next);
     state = next;
+    pi.events?.emit('cyrius:code-model:phase:v1', {
+      sessionId: (next ?? previous)?.sessionId,
+      phase: next?.phase ?? 'main',
+      previous: previous?.phase,
+    });
   }
 
   async function guarded(operation) {

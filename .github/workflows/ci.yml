@@ -17,3 +17,19 @@ jobs:
           node-version: 24
       - run: npm test
       - run: npm run check
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          path: omp-code-model
+      - uses: actions/checkout@v5
+        with:
+          repository: cyriusweng/omp-jev-gate
+          ref: main
+          path: omp-jev-gate
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - run: npm run test:integration
+        working-directory: omp-code-model

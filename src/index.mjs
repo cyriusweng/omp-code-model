@@ -7,7 +7,7 @@ import { installAutomaticRouting } from './automatic-routing.mjs';
 export default function codeModelExtension(pi, options = {}) {
   const session = installSessionMode(pi, options);
   const advisor = createRoutingAdvisor(pi, options);
-  installAutomaticRouting(pi, {
+  const automatic = installAutomaticRouting(pi, {
     advisor,
     session,
     configPath: options.configPath,
@@ -37,6 +37,12 @@ export default function codeModelExtension(pi, options = {}) {
           useJev: params?.useJev !== false,
         }, ctx, signal)
         : await session.run(action, ctx, signal, { effort: params?.effort });
+      if (action === 'status') {
+        result.automaticRouting = automatic.currentReceipt(ctx);
+        if (result.automaticRouting) {
+          result.message += `\nCurrent turn automatic routing receipt\n${JSON.stringify(result.automaticRouting)}`;
+        }
+      }
       return { content: [{ type: 'text', text: result.message }], details: result };
     },
   });

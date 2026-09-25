@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { getModelEfforts, getRouting, getSelection, loadConfig } from './configuration.mjs';
 
 export const ROUTING_STATE_TYPE = 'omp-code-model-routing-v1';
@@ -114,7 +114,11 @@ function fallbackReason(error, signal) {
 }
 
 function validChoice(answer, choices) {
-  return answer?.type === 'choice' && choices.includes(answer.choice) ? answer.choice : undefined;
+  const probability = value => Number.isFinite(value) && value >= 0 && value <= 1;
+  return answer?.type === 'choice' && choices.includes(answer.choice) &&
+    probability(answer.confidence) && answer.probabilities &&
+    Object.keys(answer.probabilities).length === choices.length &&
+    choices.every(label => probability(answer.probabilities[label])) ? answer.choice : undefined;
 }
 
 function formatPercent(value) {
@@ -151,6 +155,7 @@ export function createRoutingAdvisor(pi, options = {}) {
     if (cachedKey) return { key: cachedKey, source: 'omp-token-store' };
     try {
       const result = await exec(['token', 'typesafe'], signal);
+      signal?.throwIfAborted();
       const key = result.code === 0 ? result.stdout.trim() : '';
       if (key.length >= 10) {
         cachedKey = key;
@@ -165,18 +170,21 @@ export function createRoutingAdvisor(pi, options = {}) {
   async function quota(provider, model, signal) {
     const cached = quotaCache.get(provider);
     const ttl = options.quotaCacheMs ?? 60_000;
-    if (cached && Date.now() - cached.at < ttl) return cached.value;
+    if (cached && Date.now() - cached.at < ttl) {
+      return cached.payload ? summarizeQuota(cached.payload, provider, model) : cached.value;
+    }
     let value;
+    let payload;
     try {
       const result = await exec(['usage', '--json', '--redact', '--provider', provider], signal);
-      value = result.code === 0
-        ? summarizeQuota(JSON.parse(result.stdout), provider, model)
-        : unknownQuota('usage_command_failed');
+      signal?.throwIfAborted();
+      if (result.code === 0) payload = JSON.parse(result.stdout);
+      value = payload ? summarizeQuota(payload, provider, model) : unknownQuota('usage_command_failed');
     } catch (error) {
       if (signal?.aborted) throw error;
       value = unknownQuota(error instanceof SyntaxError ? 'usage_json_invalid' : 'usage_command_failed');
     }
-    quotaCache.set(provider, { at: Date.now(), value });
+    quotaCache.set(provider, { at: Date.now(), payload, value });
     return value;
   }
 
@@ -193,6 +201,7 @@ export function createRoutingAdvisor(pi, options = {}) {
       throw error;
     }
     const result = await response.json();
+    signal?.throwIfAborted();
     if (!result || typeof result !== 'object' || !result.answers || typeof result.answers !== 'object') {
       throw new Error('TypeSafe returned an invalid response.');
     }
@@ -204,11 +213,21 @@ export function createRoutingAdvisor(pi, options = {}) {
     allowSubagent = false,
     useJev = true,
     fallbackRoute,
+    automatic = false,
+    traceId,
   }, ctx, signal) {
+    const started = performance.now();
+    const startedAt = new Date().toISOString();
+    if (!traceId) {
+      traceId = randomUUID();
+      pi.events?.emit('cyrius:chain-trace:v1', { ctx, accept(id) { traceId = id; } });
+    }
+    const judgmentId = randomUUID();
     signal?.throwIfAborted();
     if (typeof task !== 'string' || !task.trim()) throw new Error('A task summary is required for routing.');
     const normalizedTask = task.trim().slice(0, 12_000);
     const config = await loadConfig(options.configPath);
+    signal?.throwIfAborted();
     const configuredFallback = getRouting(config).fallback;
     const fallback = (fallbackRoute ?? configuredFallback) === 'code_model' ? 'code_model' : 'main_agent';
     const selected = getSelection(config);
@@ -237,54 +256,76 @@ export function createRoutingAdvisor(pi, options = {}) {
     };
 
     if (useJev && routes.length >= 2) {
-      const auth = await credential(signal);
-      if (auth.key) {
-        const questions = {
-          execution_path: {
-            type: 'choice',
-            instructions: 'Choose the execution path with the highest expected reliability per unit of total implementation, switching, checking and recovery cost.',
-            criteria: Object.fromEntries(routes.map(value => [value, ROUTE_CRITERIA[value]])),
-          },
+      const questions = {
+        execution_path: {
+          type: 'choice',
+          instructions: 'Choose the execution path with the highest expected reliability per unit of total implementation, switching, checking and recovery cost.',
+          criteria: Object.fromEntries(routes.map(value => [value, ROUTE_CRITERIA[value]])),
+        },
+      };
+      if (routes.includes('code_model') && supportedEfforts.length >= 2) {
+        questions.coding_effort = {
+          type: 'choice',
+          instructions: 'Choose the smallest supported effort that can reliably complete this coding task.',
+          criteria: Object.fromEntries(supportedEfforts.map(value => [value, EFFORT_CRITERIA[value]])),
         };
-        if (routes.includes('code_model') && supportedEfforts.length >= 2) {
-          questions.coding_effort = {
-            type: 'choice',
-            instructions: 'Choose the smallest supported effort that can reliably complete this coding task.',
-            criteria: Object.fromEntries(supportedEfforts.map(value => [value, EFFORT_CRITERIA[value]])),
-          };
+      }
+      const main = currentModel(ctx);
+      const state = {
+        task: normalizedTask,
+        currentMainModel: main ? { provider: main.provider, model: main.id } : undefined,
+        configuredCodeModel: selected, codeModelEligible, supportedEfforts,
+        quota: quotaResult, subagentAuthorised: Boolean(allowSubagent),
+        policy: automatic
+          ? 'Apply the configured automatic routing mode. Subagent use requires explicit user authorisation.'
+          : 'The recommendation is advisory. A coding phase requires an explicit code-model start call. Subagent use requires explicit user authorisation.',
+      };
+      try {
+        signal?.throwIfAborted();
+        let shared;
+        if (automatic) {
+          pi.events?.emit('cyrius:jev-preflight:v1', {
+            state, questions, ctx, signal, traceId, judgmentId, prompt: task,
+            accept(promise) { shared = promise; },
+          });
         }
-        const main = currentModel(ctx);
-        const state = {
-          task: normalizedTask,
-          currentMainModel: main ? { provider: main.provider, model: main.id } : undefined,
-          configuredCodeModel: selected,
-          codeModelEligible,
-          supportedEfforts,
-          quota: quotaResult,
-          subagentAuthorised: Boolean(allowSubagent),
-          policy: 'The recommendation is advisory. A coding phase requires a later explicit code-model start call. Subagent use requires explicit user authorisation.',
-        };
-        try {
-          const response = await askJev(state, questions, auth.key, signal);
-          route = validChoice(response.answers.execution_path, routes) ?? route;
-          effort = validChoice(response.answers.coding_effort, supportedEfforts) ?? effort;
+        let response = shared ? await shared : undefined;
+        signal?.throwIfAborted();
+        if (!response) {
+          const auth = await credential(signal);
+          if (auth.key) response = await askJev(state, questions, auth.key, signal);
+        }
+        signal?.throwIfAborted();
+        if (response) {
+          const selectedRoute = validChoice(response.answers.execution_path, routes);
+          const selectedEffort = questions.coding_effort
+            ? validChoice(response.answers.coding_effort, supportedEfforts) : effort;
+          if (!selectedRoute || (questions.coding_effort && !selectedEffort)) {
+            throw Object.assign(new Error('TypeSafe returned an invalid routing answer.'), { code: 'typesafe_answer_invalid' });
+          }
+          route = selectedRoute;
+          effort = selectedEffort;
           judgment = {
             backend: 'typesafe',
             model: typeof response.model === 'string' ? response.model : 'jev-latest',
             confidence: response.answers.execution_path?.confidence,
             probabilities: response.answers.execution_path?.probabilities,
-            usage: safeUsage(response.usage),
+            usage: response.sharedPreflight ? response.usage : safeUsage(response.usage),
+            sharedPreflight: Boolean(response.sharedPreflight),
             fallbackReason: undefined,
           };
-        } catch (error) {
-          judgment.fallbackReason = error?.code ?? fallbackReason(error, signal);
         }
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (error?.jevPreflightBlocked) throw error;
+        judgment.fallbackReason = error?.code ?? fallbackReason(error, signal);
       }
     } else if (useJev && routes.length < 2) {
       judgment.fallbackReason = quotaResult.state === 'exhausted'
         ? 'quota_exhausted'
         : codeModelEligible ? 'single_route_available' : 'coding_model_ineligible';
     }
+    signal?.throwIfAborted();
 
     const result = {
       version: 1,
@@ -295,6 +336,10 @@ export function createRoutingAdvisor(pi, options = {}) {
       currentMainModel: currentModel(ctx)
         ? { provider: currentModel(ctx).provider, model: currentModel(ctx).id }
         : undefined,
+      traceId,
+      startedAt,
+      durationMs: Math.round(performance.now() - started),
+      judgmentId,
       codeModelEligible,
       subagentAuthorised: Boolean(allowSubagent),
       fallbackRoute: fallback,

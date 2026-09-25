@@ -75,7 +75,7 @@ async function fixture({ mode = 'off', fallback = 'main_agent', minConfidence, r
     for (const handler of handlers.get(name) ?? []) results.push(await handler({ type: name, ...event }, ctx));
     return results;
   }
-  return { advisorCalls, controller, emit, entries, transitions };
+  return { advisor, ctx, advisorCalls, controller, emit, entries, transitions };
 }
 
 function choice(route, effort = 'medium') {
@@ -282,4 +282,101 @@ test('threshold boundary and configured main-agent fallback retain truthful rout
   assert.equal(f.entries.at(-1).data.effectiveRoute, 'main_agent');
   assert.equal(f.entries.at(-1).data.action, 'restored_main_agent');
   assert.equal(f.entries.at(-1).data.decisionReason, 'configured_fallback');
+});
+
+test('a cancelled prompt leaves the advisor and model unchanged', async () => {
+  const f = await fixture({ mode: 'enforce', recommendations: [choice('code_model')] });
+  const abort = new AbortController();
+  abort.abort();
+  await assert.rejects(f.emit('before_agent_start', { prompt: 'Implement.', signal: abort.signal }), { name: 'AbortError' });
+  assert.equal(f.advisorCalls.length, 0);
+  assert.equal(f.transitions.length, 0);
+});
+
+test('cancellation reaches the advisor and suppresses a late successful answer', async () => {
+  const f = await fixture({ mode: 'enforce' });
+  const abort = new AbortController();
+  let release;
+  let signal;
+  const entered = new Promise(resolve => {
+    f.advisor.recommend = async (_input, _ctx, received) => {
+      signal = received;
+      resolve();
+      return new Promise(done => { release = done; });
+    };
+  });
+  const pending = f.emit('before_agent_start', { prompt: 'Implement.', signal: abort.signal });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  await entered;
+  abort.abort();
+  assert.equal(signal.aborted, true);
+  release(choice('code_model'));
+  await rejected;
+  assert.equal(f.transitions.length, 0);
+  assert.equal(f.entries.length, 0);
+});
+
+for (const lifecycle of ['session_before_switch', 'session_switch', 'session_tree', 'session_branch', 'session_shutdown', 'agent_end']) {
+  test(`${lifecycle} invalidates an in-flight routing answer`, async () => {
+    const f = await fixture({ mode: 'enforce' });
+    let release;
+    const entered = new Promise(resolve => {
+      f.advisor.recommend = async () => {
+        resolve();
+        return new Promise(done => { release = done; });
+      };
+    });
+    const pending = f.emit('before_agent_start', { prompt: 'Implement.' });
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    await entered;
+    await f.emit(lifecycle);
+    release(choice('code_model'));
+    await rejected;
+    assert.equal(f.transitions.length, 0);
+    assert.equal(f.entries.length, 0);
+  });
+}
+
+test('a later prompt owns the receipt when an earlier answer arrives last', async () => {
+  const f = await fixture({ mode: 'enforce' });
+  let release;
+  const entered = new Promise(resolve => {
+    f.advisor.recommend = async ({ task }) => {
+      if (task === 'First') {
+        resolve();
+        return new Promise(done => { release = done; });
+      }
+      return choice('main_agent');
+    };
+  });
+  const pending = f.emit('before_agent_start', { prompt: 'First' });
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  await entered;
+  await f.emit('before_agent_start', { prompt: 'Second' });
+  release(choice('code_model'));
+  await rejected;
+  assert.equal(f.transitions.length, 0);
+  assert.equal(f.entries.length, 1);
+  assert.equal(f.controller.currentReceipt(f.ctx).route, 'main_agent');
+});
+
+test('a changed session identity suppresses a late answer before its lifecycle event', async () => {
+  const f = await fixture({ mode: 'enforce' });
+  f.advisor.recommend = async () => {
+    f.ctx.sessionManager.getSessionId = () => 'session-two';
+    return choice('code_model');
+  };
+  await assert.rejects(f.emit('before_agent_start', { prompt: 'Implement.' }), { name: 'AbortError' });
+  assert.equal(f.transitions.length, 0);
+  assert.equal(f.entries.length, 0);
+});
+
+test('a cancelled navigation preserves ownership of the automatic coding phase', async () => {
+  const f = await fixture({ mode: 'enforce', recommendations: [choice('code_model'), choice('main_agent')] });
+  await f.emit('before_agent_start', { prompt: 'Implement.' });
+  assert.equal(f.controller.automaticPhase, true);
+  await f.emit('session_before_switch');
+  assert.equal(f.controller.automaticPhase, true);
+  await f.emit('before_agent_start', { prompt: 'Explain the result.' });
+  assert.deepEqual(f.transitions.map(t => t.action), ['start', 'finish']);
 });

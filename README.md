@@ -102,17 +102,19 @@ The configured fallback runs when the TypeSafe credential or request is unavaila
 
 ## Working with OMP Jev Gate
 
-[OMP Jev Gate](https://github.com/cyriusweng/omp-jev-gate) complements Code Model with a global judgment policy and a first-tool checkpoint. Code Model's Jev preflight selects the main agent or configured coding model and the coding effort. Jev Gate's separate preflight supplies decision mode, reasoning depth, verification depth and later-checkpoint likelihood, then governs `edit`, `write` and `bash`. OMP serialises both `before_agent_start` hooks before the provider request and preserves system-prompt amendments, so an automatically selected coding model receives Jev Gate's policy from its first response.
+[OMP Jev Gate](https://github.com/cyriusweng/omp-jev-gate) complements Code Model with a global judgment policy and a first-tool checkpoint. With both plugins enabled, one TypeSafe request carries the execution-route, coding-effort and gate questions. Both `before_agent_start` hook orders share that request. Each plugin validates its own answers and records its own receipt, linked by `traceId` and `judgmentId`, so the selected executor receives the gate policy from its first response.
 
 Phase controls and guarded work retain separate scopes. `code-model start` can enter a coding phase while a Jev Gate turn is pending; the selected model then calls `jev-judge` when the policy's four trigger conditions hold, and the resulting disposition unlocks guarded tools for that task turn. `code-model finish` restores the original model with the same conversation history and current turn disposition. When agent completion starts a fresh review turn, automatic routing and Jev Gate each produce a new preflight and receipt.
 
-Each plugin normally issues its own focused TypeSafe request. Their fallback settings compose. With Code Model routing set to `enforce main_agent` and Jev Gate set to `enforce continue`, an unavailable routing judgment retains or restores the main executor, while an unavailable gate judgment records `degraded_continue` and lets the agent proceed with audited reasoning. Jev Gate's `enforce block` setting gives the affected turn fail-closed availability.
+Each plugin retains its own mode and fallback policy. A standalone plugin uses its focused TypeSafe request. With Code Model routing set to `enforce main_agent` and Jev Gate set to `enforce continue`, an unavailable routing judgment retains or restores the main executor, while an unavailable gate judgment records `degraded_continue` and lets the agent proceed with audited reasoning. Jev Gate's `enforce block` setting stops the shared preflight before a model transition. Terminal cancellation, native cancellation and session navigation abort pending preparation and release its input observer.
 
 ## Reliability behaviour
 
 The extension records the original model and configured effort before entering a coding phase. A model or effort selected through another OMP control remains active when the phase ends. Retry fallback entries remain phase-owned so a repeated `start` keeps the original restoration target.
 
 An interrupted switch stores a recoverable phase marker. Session lifecycle events restore recorded state, navigation waits for restoration, and the configuration writer uses an atomic rename with concurrent-update detection.
+
+Quota caching follows the configured coding provider and model. Preparation receipts retain their originating session and turn; `/code-model status` exposes the current turn's automatic-routing receipt. Model requests continue to use the provider connection configured in OMP.
 
 ## Development
 
@@ -124,6 +126,8 @@ npm run check
 ```
 
 The test suite covers configuration integrity, interactive menu flows, manual and automatic Jev routing, prompt-hook idempotency, fallback behavior, phase transitions, recovery, retry fallback, configured `auto`, extension registration and lifecycle completion.
+
+The shared-preflight integration suite lives in `test/integration/preflight.test.mjs`. Check out `omp-jev-gate` beside this repository and run `npm run test:integration`. Both repositories run this suite in CI against the companion's `main` branch. Its ten scenarios cover both hook orders, independent modes, shared failure handling, malformed gate answers, cancellation and image-only input. Network responses and model transitions use deterministic fixtures.
 
 ## Licence
 
